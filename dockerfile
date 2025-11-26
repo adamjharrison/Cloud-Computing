@@ -1,9 +1,0 @@
-FROM python:3.13
-
-RUN python -m pip install aiohttp
-
-COPY . .
-
-RUN pip install atlasopenmagic numpy matplotlib uproot awkward vector requests
-
-CMD [ "python", "./HZZAnalysis.py"]
