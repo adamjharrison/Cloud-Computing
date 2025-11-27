@@ -15,6 +15,8 @@ services:
     build: main/.
     networks:
       - rabbit
+    volumes:
+      - ./plots:/data
     deploy:
       mode: replicated
       replicas: 1
@@ -28,7 +30,7 @@ services:
       - rabbit
     deploy:
       mode: replicated
-      replicas: 2
+      replicas: 4
     depends_on:
       rabbitmq:
         condition: service_healthy
