@@ -1,9 +1,9 @@
 FROM python:3.13
 
-RUN python -m pip install aiohttp
+RUN python -m pip install atlasopenmagic numpy uproot awkward vector requests pika aiohttp
+
+RUN python -c "import atlasopenmagic as atom;atom.set_release('2025e-13tev-beta'); from atlasopenmagic import install_from_environment; install_from_environment()"
 
 COPY . .
-
-RUN pip install atlasopenmagic numpy matplotlib uproot awkward vector requests pika
 
 CMD [ "python", "./Analysis.py"]

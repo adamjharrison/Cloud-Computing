@@ -9,11 +9,7 @@ import matplotlib.pyplot as plt  # for plotting
 import numpy as np  # for numerical calculations such as histogramming
 import pika
 import json
-from atlasopenmagic import install_from_environment
-install_from_environment()
-
-
-atom.available_releases()
+import atlasopenmagic as atom
 atom.set_release('2025e-13tev-beta')
 
 MeV = 0.001
@@ -62,31 +58,45 @@ params = pika.ConnectionParameters('rabbitmq',heartbeat=0)
 connection = pika.BlockingConnection(params)
 channel = connection.channel()
 channel.queue_declare(queue='file index',durable=True)
-channel.queue_declare(queue='frame',durable=True)
-
+channel.queue_declare(queue='chunk',durable=True)
+channel.queue_declare(queue='nchunks',durable=True)
+def chunk_count(ch,method,properties,body):
+    print("recieved number of chunks")
+    message = json.loads(body.decode())
+    s = message['s']
+    chunkcount[s] += message['nchunks']
+    recvfiles[s]+=1
+    ch.basic_ack(delivery_tag = method.delivery_tag)
 def process(ch, method, properties, body):
-    print(f" [x] Received {body}")
-    message = json.loads(body)
+    print("Received chunk")
+    message = json.loads(body.decode())
     chunk = ak.from_json(message['chunk'])
     cid = message['cid']
     s = message['s']
-    frames[s].append({"cid":cid,"chunk":chunk})
-    recv[s]+=1 
+    val = message['val']
+    if val not in frames[s]:
+        frames[s][val] = []
+    frames[s][val].append({"cid":cid,"chunk":chunk})
+    recvchunk[s]+=1 
     ch.basic_ack(delivery_tag = method.delivery_tag)
 
 # Loop over samples
-count = {}
-recv = {}
+chunkcount = {}
+recvchunk = {}
 frames = {}
-channel.basic_consume(queue='frame', on_message_callback=process)
+sentfiles={}
+recvfiles={}
 for s in samples:
 
     # Print which sample is being processed
     print('Processing '+s+' samples')
 
     # Define empty list to hold data
-    frames[s] = []
-    count[s] = 0
+    frames[s] = {}
+    recvchunk[s] = 0
+    chunkcount[s] = 0
+    sentfiles[s]= 0
+    recvfiles[s]=0
     # Loop over each file
     for val in samples[s]['list']:
         message = json.dumps({"val":val,"s":s})
@@ -95,17 +105,21 @@ for s in samples:
                         body=message,
                         properties=pika.BasicProperties(
                         delivery_mode = pika.DeliveryMode.Persistent))
-        count[s]+=1
-print('sent all data')    
+        sentfiles[s]+=1
+print('sent all data')
+channel.basic_consume(queue='nchunks', on_message_callback=chunk_count)
+channel.basic_consume(queue='chunk', on_message_callback=process)
 for s in samples:
-    recv[s]=0
-    while count[s]!=recv[s]:
+    while recvfiles[s]!=sentfiles[s] or chunkcount[s]!=recvchunk[s]:
         connection.process_data_events(time_limit=1)
-print('recieved all data')        
-for s in samples:
-    frames[s].sort(key=lambda x:x["cid"]) 
-    for i in frames[s]:
-        all_data[s] = ak.concatenate([entry["chunk"] for entry in frames[s]])   
+    print(f'recieved all data for {s}')        
+    files = []
+    for val in samples[s]['list']:
+        chunks = frames[s][val]
+        chunks.sort(key=lambda x:x["cid"]) 
+        for x in chunks:
+            files.append(x['chunk'])
+    all_data[s] = ak.concatenate(files)   
 
 connection.close()
 
