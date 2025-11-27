@@ -7,7 +7,7 @@ import uproot  # for reading .root files
 from matplotlib.ticker import AutoMinorLocator  # for minor ticks
 import matplotlib.pyplot as plt  # for plotting
 import numpy as np  # for numerical calculations such as histogramming
-import pika
+import pika # pyright: ignore[reportMissingModuleSource]
 import json
 import atlasopenmagic as atom
 atom.set_release('2025e-13tev-beta')
@@ -64,8 +64,8 @@ def chunk_count(ch,method,properties,body):
     print("recieved number of chunks")
     message = json.loads(body.decode())
     s = message['s']
-    chunkcount[s] += message['nchunks']
-    recvfiles[s]+=1
+    val = message['val']
+    chunkcount[s][val] = message['nchunks']
     ch.basic_ack(delivery_tag = method.delivery_tag)
 def process(ch, method, properties, body):
     print("Received chunk")
@@ -77,15 +77,13 @@ def process(ch, method, properties, body):
     if val not in frames[s]:
         frames[s][val] = []
     frames[s][val].append({"cid":cid,"chunk":chunk})
-    recvchunk[s]+=1 
+    recvchunk[s][val]+=1 
     ch.basic_ack(delivery_tag = method.delivery_tag)
 
 # Loop over samples
 chunkcount = {}
 recvchunk = {}
 frames = {}
-sentfiles={}
-recvfiles={}
 for s in samples:
 
     # Print which sample is being processed
@@ -93,25 +91,26 @@ for s in samples:
 
     # Define empty list to hold data
     frames[s] = {}
-    recvchunk[s] = 0
-    chunkcount[s] = 0
-    sentfiles[s]= 0
-    recvfiles[s]=0
+    recvchunk[s] = {}
+    chunkcount[s] = {}
     # Loop over each file
     for val in samples[s]['list']:
+        frames[s][val]=[]
+        recvchunk[s][val] = 0
+        chunkcount[s][val] = None
         message = json.dumps({"val":val,"s":s})
         channel.basic_publish(exchange='',
                         routing_key='file index',
                         body=message,
                         properties=pika.BasicProperties(
                         delivery_mode = pika.DeliveryMode.Persistent))
-        sentfiles[s]+=1
 print('sent all data')
 channel.basic_consume(queue='nchunks', on_message_callback=chunk_count)
 channel.basic_consume(queue='chunk', on_message_callback=process)
 for s in samples:
-    while recvfiles[s]!=sentfiles[s] or chunkcount[s]!=recvchunk[s]:
-        connection.process_data_events(time_limit=1)
+    for val in samples[s]['list']:
+        while chunkcount[s][val]==None or chunkcount[s][val]!=recvchunk[s][val]:
+            connection.process_data_events(time_limit=1)
     print(f'recieved all data for {s}')        
     files = []
     for val in samples[s]['list']:

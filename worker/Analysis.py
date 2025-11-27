@@ -1,6 +1,6 @@
 import vector  # for 4-momentum calculations
 import awkward as ak  # to represent nested data in columnar format
-import pika
+import pika # pyright: ignore[reportMissingModuleSource]
 import time
 import uproot
 import json
