@@ -162,6 +162,11 @@ params = pika.ConnectionParameters(
 
 connection = pika.BlockingConnection(params)
 channel = connection.channel()
+channel.exchange_declare(exchange='logs', exchange_type='fanout')
+result = channel.queue_declare(queue='done', exclusive=True)
+queue_name = result.method.queue
+
+channel.queue_bind(exchange='logs', queue=queue_name)
 
 channel.queue_declare(queue='file index', durable=True)
 channel.queue_declare(queue='chunk',durable=True)
@@ -173,10 +178,14 @@ def callback(ch, method, properties, body):
     s = message['s']
     splice(val,s)
     ch.basic_ack(delivery_tag = method.delivery_tag)
-    
+def close(ch, method, properties, body):
+    print("Closing container")
+    channel.stop_consuming()
+    connection.close()
 channel.basic_qos(prefetch_count=1)
 # setup to listen for messages on queue 'messages'
 channel.basic_consume(queue='file index', on_message_callback=callback)
+channel.basic_consume(queue=queue_name, on_message_callback=close, auto_ack=True)
 
 print('Waiting for messages. To exit press CTRL+C')
 

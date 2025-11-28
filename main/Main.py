@@ -14,24 +14,19 @@ atom.set_release('2025e-13tev-beta')
 
 MeV = 0.001
 GeV = 1.0
-# x-axis range of the plot
 xmin = 80 * GeV
 xmax = 250 * GeV
-
-# Histogram bin setup
 step_size = 2.5 * GeV
+lumi = 36.6
+fraction=1.0
+
 bin_edges = np.arange(start=xmin,  # The interval includes this value
                       stop=xmax+step_size,  # The interval doesn't include this value
                       step=step_size)  # Spacing between values
 bin_centres = np.arange(start=xmin+step_size/2,  # The interval includes this value
                         stop=xmax+step_size/2,  # The interval doesn't include this value
                         step=step_size)  # Spacing between values
-# Set luminosity to 36.6 fb-1, data size of the full release
-lumi = 36.6
 
-# Controls the fraction of all events analysed
-# reduce this is if you want quicker runtime (implemented in the loop over the tree)
-fraction = 1.0
 skim = "exactly4lep"
 # Define empty dictionary to hold awkward arrays
 all_data = {}
@@ -49,17 +44,17 @@ defs = {
 }
 
 samples = atom.build_dataset(defs, skim=skim, protocol='https', cache=True)
-variables = ['lep_pt', 'lep_eta', 'lep_phi', 'lep_e', 'lep_charge', 'lep_type', 'trigE', 'trigM', 'lep_isTrigMatched',
-             'lep_isLooseID', 'lep_isMediumID', 'lep_isLooseIso', 'lep_type']
-
 
 params = pika.ConnectionParameters('rabbitmq',heartbeat=0)
 
 connection = pika.BlockingConnection(params)
 channel = connection.channel()
+
+channel.exchange_declare(exchange='logs', exchange_type='fanout')
 channel.queue_declare(queue='file index',durable=True)
 channel.queue_declare(queue='chunk',durable=True)
 channel.queue_declare(queue='nchunks',durable=True)
+
 def chunk_count(ch,method,properties,body):
     print("recieved number of chunks")
     message = json.loads(body.decode())
@@ -67,6 +62,7 @@ def chunk_count(ch,method,properties,body):
     val = message['val']
     chunkcount[s][val] = message['nchunks']
     ch.basic_ack(delivery_tag = method.delivery_tag)
+    
 def process(ch, method, properties, body):
     print("Received chunk")
     message = json.loads(body.decode())
@@ -118,10 +114,9 @@ for s in samples:
         chunks.sort(key=lambda x:x["cid"]) 
         for x in chunks:
             files.append(x['chunk'])
-    all_data[s] = ak.concatenate(files)   
-
+    all_data[s] = ak.concatenate(files)
+channel.basic_publish(exchange='logs', routing_key='', body='Done')
 connection.close()
-
 data_x, _ = np.histogram(ak.to_numpy(all_data['Data']['mass']),
                          bins=bin_edges)  # histogram the data
 data_x_errors = np.sqrt(data_x)  # statistical error on the data
