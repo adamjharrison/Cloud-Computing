@@ -52,97 +52,68 @@ channel = connection.channel()
 
 channel.exchange_declare(exchange='logs', exchange_type='fanout')
 channel.queue_declare(queue='file index',durable=True)
-channel.queue_declare(queue='chunk',durable=True)
-channel.queue_declare(queue='nchunks',durable=True)
+channel.queue_declare(queue='data',durable=True)
 
-def chunk_count(ch,method,properties,body):
-    print("recieved number of chunks")
-    message = json.loads(body.decode())
-    s = message['s']
-    val = message['val']
-    chunkcount[s][val] = message['nchunks']
-    ch.basic_ack(delivery_tag = method.delivery_tag)
-    
 def process(ch, method, properties, body):
-    print("Received chunk")
+    global recv,count
+    print("Received processed file")
     message = json.loads(body.decode())
-    chunk = ak.from_json(message['chunk'])
-    cid = message['cid']
     s = message['s']
-    val = message['val']
-    if val not in frames[s]:
-        frames[s][val] = []
-    frames[s][val].append({"cid":cid,"chunk":chunk})
-    recvchunk[s][val]+=1 
+    hist = np.array(message['hist'])
+    weights = np.array(message['weights'])
+    all_data[s][0].append(hist)
+    all_data[s][1].append(weights)
+    recv+=1 
     ch.basic_ack(delivery_tag = method.delivery_tag)
+    if count==recv:
+        print(f'Recieved all data') 
+        channel.basic_publish(exchange='logs', routing_key='', body='Done')
+        channel.stop_consuming()
 
 # Loop over samples
-chunkcount = {}
-recvchunk = {}
-frames = {}
+count = 0
+recv = 0
+all_data = {}
 for s in samples:
 
     # Print which sample is being processed
     print('Processing '+s+' samples')
 
     # Define empty list to hold data
-    frames[s] = {}
-    recvchunk[s] = {}
-    chunkcount[s] = {}
+    all_data[s] = [[],[]]
     # Loop over each file
     for val in samples[s]['list']:
-        frames[s][val]=[]
-        recvchunk[s][val] = 0
-        chunkcount[s][val] = None
         message = json.dumps({"val":val,"s":s})
         channel.basic_publish(exchange='',
                         routing_key='file index',
                         body=message,
                         properties=pika.BasicProperties(
                         delivery_mode = pika.DeliveryMode.Persistent))
-print('sent all data')
-channel.basic_consume(queue='nchunks', on_message_callback=chunk_count)
-channel.basic_consume(queue='chunk', on_message_callback=process)
-for s in samples:
-    for val in samples[s]['list']:
-        while chunkcount[s][val]==None or chunkcount[s][val]!=recvchunk[s][val]:
-            connection.process_data_events(time_limit=1)
-    print(f'recieved all data for {s}')        
-    files = []
-    for val in samples[s]['list']:
-        chunks = frames[s][val]
-        chunks.sort(key=lambda x:x["cid"]) 
-        for x in chunks:
-            files.append(x['chunk'])
-    all_data[s] = ak.concatenate(files)
-channel.basic_publish(exchange='logs', routing_key='', body='Done')
+        count+=1
+print('Sent all data')
+
+channel.basic_consume(queue='data', on_message_callback=process)
+channel.start_consuming()
 connection.close()
-data_x, _ = np.histogram(ak.to_numpy(all_data['Data']['mass']),
-                         bins=bin_edges)  # histogram the data
-data_x_errors = np.sqrt(data_x)  # statistical error on the data
 
-# histogram the signal
-signal_x = ak.to_numpy(all_data[r'Signal ($m_H$ = 125 GeV)']['mass'])
-# get the weights of the signal events
-signal_weights = ak.to_numpy(all_data[r'Signal ($m_H$ = 125 GeV)'].totalWeight)
-# get the colour for the signal bar
-signal_color = samples[r'Signal ($m_H$ = 125 GeV)']['color']
+mc_x = [] # define list to hold the Monte Carlo histogram entries
+mc_weights = [] # define list to hold the Monte Carlo weights
+mc_colors = [] # define list to hold the colors of the Monte Carlo bars
+mc_labels = [] # define list to hold the legend labels of the Monte Carlo bars
 
-mc_x = []  # define list to hold the Monte Carlo histogram entries
-mc_weights = []  # define list to hold the Monte Carlo weights
-mc_colors = []  # define list to hold the colors of the Monte Carlo bars
-mc_labels = []  # define list to hold the legend labels of the Monte Carlo bars
-
-for s in samples:  # loop over samples
-    if s not in ['Data', r'Signal ($m_H$ = 125 GeV)']:  # if not data nor signal
-        # append to the list of Monte Carlo histogram entries
-        mc_x.append(ak.to_numpy(all_data[s]['mass']))
-        # append to the list of Monte Carlo weights
-        mc_weights.append(ak.to_numpy(all_data[s].totalWeight))
-        # append to the list of Monte Carlo bar colors
-        mc_colors.append(samples[s]['color'])
-        mc_labels.append(s)  # append to the list of Monte Carlo legend labels
-
+for s in samples:
+    if s == 'Data':
+        data_x,_ = np.histogram(np.concatenate(all_data[s][0]),bins=bin_edges)
+        data_x_errors = np.sqrt( data_x )
+    elif s == r'Signal ($m_H$ = 125 GeV)':
+        signal_x = np.concatenate(all_data[s][0])
+        signal_color = samples[r'Signal ($m_H$ = 125 GeV)']['color']
+        signal_weights = np.concatenate(all_data[s][1])
+    else:
+        mc_x.append(np.concatenate(all_data[s][0])) # append to the list of Monte Carlo histogram entries
+        mc_weights.append(np.concatenate(all_data[s][1])) # append to the list of Monte Carlo weights
+        mc_colors.append(samples[s]['color']) # append to the list of Monte Carlo bar colors
+        mc_labels.append(s) # append to the list of Monte Carlo legend labels
 # *************
 # Main plot
 # *************
