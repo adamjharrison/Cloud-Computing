@@ -163,7 +163,7 @@ params = pika.ConnectionParameters(
 connection = pika.BlockingConnection(params)
 channel = connection.channel()
 channel.exchange_declare(exchange='logs', exchange_type='fanout')
-result = channel.queue_declare(queue='done', exclusive=True)
+result = channel.queue_declare(queue='done')
 queue_name = result.method.queue
 
 channel.queue_bind(exchange='logs', queue=queue_name)
@@ -172,7 +172,7 @@ channel.queue_declare(queue='file index', durable=True)
 channel.queue_declare(queue='chunk',durable=True)
 channel.queue_declare(queue='nchunks',durable=True)
 def callback(ch, method, properties, body):
-    print(f" [x] Received {body}")
+    print(" Received File")
     message = json.loads(body.decode())
     val = message['val']
     s = message['s']

@@ -56,7 +56,7 @@ channel.queue_declare(queue='chunk',durable=True)
 channel.queue_declare(queue='nchunks',durable=True)
 
 def chunk_count(ch,method,properties,body):
-    print("recieved number of chunks")
+    print("Recieved number of chunks")
     message = json.loads(body.decode())
     s = message['s']
     val = message['val']
@@ -100,14 +100,14 @@ for s in samples:
                         body=message,
                         properties=pika.BasicProperties(
                         delivery_mode = pika.DeliveryMode.Persistent))
-print('sent all data')
+print('Sent all data')
 channel.basic_consume(queue='nchunks', on_message_callback=chunk_count)
 channel.basic_consume(queue='chunk', on_message_callback=process)
 for s in samples:
     for val in samples[s]['list']:
         while chunkcount[s][val]==None or chunkcount[s][val]!=recvchunk[s][val]:
             connection.process_data_events(time_limit=1)
-    print(f'recieved all data for {s}')        
+    print(f'Recieved all data for {s}')        
     files = []
     for val in samples[s]['list']:
         chunks = frames[s][val]
