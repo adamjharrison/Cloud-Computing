@@ -1,3 +1,4 @@
+import os
 import vector  # for 4-momentum calculations
 import awkward as ak  # to represent nested data in columnar format
 import pika # pyright: ignore[reportMissingModuleSource]
@@ -6,6 +7,8 @@ import uproot
 import json
 import atlasopenmagic as atom
 
+dir = "/data/openatlas"
+os.environ["ATOM_CACHE"] = dir
 atom.set_release('2025e-13tev-beta')
 
 lumi = 36.6
@@ -80,7 +83,6 @@ def splice(val,s):
 
     # Open file
     tree = uproot.open(fileString + ":analysis")
-
     cid=0
     csize=100000
     nchunks = (tree.num_entries +csize-1)//csize
@@ -94,7 +96,7 @@ def splice(val,s):
     # Loop over data in the tree
     for data in tree.iterate(variables + weight_variables + ["sum_of_weights", "lep_n"],
                                 library="ak",
-                                entry_stop=tree.num_entries*fraction,#):  # , # process up to numevents*fraction
+                                entry_stop=tree.num_entries*fraction,  # , # process up to numevents*fraction
                                 step_size = csize):
 
         # Number of events in this batch
@@ -137,14 +139,7 @@ def splice(val,s):
         if 'data' not in s:  # Only calculates weights if the data is MC
             data['totalWeight'] = calc_weight(weight_variables, data)
             # data['totalWeight'] = calc_weight(data)
-        print("Processed chunk")
-        procdata = json.dumps({"s":s,"val":val,"cid":cid,"csize":csize,"chunk":ak.to_json(data)})
-        channel.basic_publish(exchange='',
-                        routing_key='chunk',
-                        body=procdata,
-                        properties=pika.BasicProperties(
-                        delivery_mode = pika.DeliveryMode.Persistent))
-        print('Sent back chunk')
+        
         if not 'data' in val:
             # sum of weights passing cuts in this batch
             nOut = sum(data['totalWeight'])
@@ -152,40 +147,43 @@ def splice(val,s):
             nOut = len(data)
 
         elapsed = time.time() - start  # time taken to process
-        print("\t\t chunk"+str(cid)+" nIn: "+str(nIn)+",\t nOut: \t"+str(nOut)+"\t in " +
+        print("\t\t nIn: "+str(nIn)+",\t nOut: \t"+str(nOut)+"\t in " +
                 str(round(elapsed, 1))+"s")  # events before and after
+        print("Processed chunk")
+        hist = ak.to_numpy(data['mass']).tolist()
+        if s == 'Data':
+            weights = None
+        else:
+            weights = ak.to_numpy(data.totalWeight).tolist()
+        procdata = json.dumps({"s":s,"val":val,"cid":cid,"csize":csize,"chunk":ak.to_json(data)})
+        channel.basic_publish(exchange='',
+                        routing_key='data',
+                        body=procdata,
+                        properties=pika.BasicProperties(
+                        delivery_mode = pika.DeliveryMode.Persistent))
+        print('Sent back chunk')
         cid+=1
 
-params = pika.ConnectionParameters(
-    'rabbitmq',
-    heartbeat=0)
+params = pika.ConnectionParameters('rabbitmq',heartbeat=600,port=5672)
 
 connection = pika.BlockingConnection(params)
 channel = connection.channel()
-channel.exchange_declare(exchange='logs', exchange_type='fanout')
-result = channel.queue_declare(queue='done')
-queue_name = result.method.queue
 
-channel.queue_bind(exchange='logs', queue=queue_name)
-
-channel.queue_declare(queue='file index', durable=True)
-channel.queue_declare(queue='chunk',durable=True)
+channel.queue_declare(queue='file_index', durable=True)
+channel.queue_declare(queue='data',durable=True)
 channel.queue_declare(queue='nchunks',durable=True)
 def callback(ch, method, properties, body):
-    print(" Received File")
+    print("Received file")
     message = json.loads(body.decode())
     val = message['val']
     s = message['s']
     splice(val,s)
+    print('Sent back file')
     ch.basic_ack(delivery_tag = method.delivery_tag)
-def close(ch, method, properties, body):
-    print("Closing container")
-    channel.stop_consuming()
-    connection.close()
+
 channel.basic_qos(prefetch_count=1)
 # setup to listen for messages on queue 'messages'
-channel.basic_consume(queue='file index', on_message_callback=callback)
-channel.basic_consume(queue=queue_name, on_message_callback=close, auto_ack=True)
+channel.basic_consume(queue='file_index', on_message_callback=callback,auto_ack=False)
 
 print('Waiting for messages. To exit press CTRL+C')
 
