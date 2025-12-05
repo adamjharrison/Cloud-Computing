@@ -53,25 +53,37 @@ channel = connection.channel()
 channel.queue_declare(queue='file_index',durable=True)
 channel.queue_declare(queue='data',durable=True)
 
-def process(ch, method, properties, body):
-    global recv,count
-    print("Received processed file")
+def chunk_count(ch,method,properties,body):
+    print("Recieved number of chunks")
     message = json.loads(body.decode())
     s = message['s']
+    val = message['val']
+    chunkcount[s][val] = message['nchunks']
+    ch.basic_ack(delivery_tag = method.delivery_tag)
+    
+def process(ch, method, properties, body):
+    global recv,count
+    print("Received processed chunk")
+    message = json.loads(body.decode())
     hist = np.array(message['hist'])
+    cid = message['cid']
+    s = message['s']
+    val = message['val']
+    if val not in frames[s]:
+        frames[s][val] = []
     weights = np.array(message['weights'])
-    all_data[s][0].append(hist)
-    all_data[s][1].append(weights)
-    recv+=1 
+    all_data[s][val][0].append({"cid":cid,"chunk":hist})
+    all_data[s][val][0].append({"cid":cid,"chunk":weights})
+    recvchunk[s][val]+=1 
     ch.basic_ack(delivery_tag = method.delivery_tag)
     if count==recv:
         print(f'Recieved all data')  
         channel.stop_consuming()
 
 # Loop over samples
-count = 0
-recv = 0
 all_data = {}
+chunkcount = {}
+recvchunk = {}
 for s in samples:
 
     # Print which sample is being processed
@@ -79,6 +91,9 @@ for s in samples:
 
     # Define empty list to hold data
     all_data[s] = [[],[]]
+    frames[s] = {}
+    recvchunk[s] = {}
+    chunkcount[s] = {}
     # Loop over each file
     for val in samples[s]['list']:
         message = json.dumps({"val":val,"s":s})
@@ -87,9 +102,9 @@ for s in samples:
                         body=message,
                         properties=pika.BasicProperties(
                         delivery_mode = pika.DeliveryMode.Persistent))
-        count+=1
 print('Sent all data')
 
+channel.basic_consume(queue='nchunks', on_message_callback=chunk_count)
 channel.basic_consume(queue='data', on_message_callback=process)
 channel.start_consuming()
 connection.close()
