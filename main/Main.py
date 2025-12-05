@@ -1,16 +1,16 @@
-import atlasopenmagic as atom
-import requests  # for file gathering, if needed
-import time  # for printing time stamps
-import vector  # for 4-momentum calculations
+import os
 import awkward as ak  # to represent nested data in columnar format
-import uproot  # for reading .root files
 from matplotlib.ticker import AutoMinorLocator  # for minor ticks
 import matplotlib.pyplot as plt  # for plotting
 import numpy as np  # for numerical calculations such as histogramming
 import pika # pyright: ignore[reportMissingModuleSource]
 import json
 import atlasopenmagic as atom
+from atlasopenmagic import install_from_environment
+
+install_from_environment()
 atom.set_release('2025e-13tev-beta')
+os.environ["ATOM_CACHE"] = "/data"
 
 MeV = 0.001
 GeV = 1.0
@@ -45,13 +45,12 @@ defs = {
 
 samples = atom.build_dataset(defs, skim=skim, protocol='https', cache=True)
 
-params = pika.ConnectionParameters('rabbitmq',heartbeat=0)
+params = pika.ConnectionParameters('rabbitmq',heartbeat=600,port=5672)
 
 connection = pika.BlockingConnection(params)
 channel = connection.channel()
 
-channel.exchange_declare(exchange='logs', exchange_type='fanout')
-channel.queue_declare(queue='file index',durable=True)
+channel.queue_declare(queue='file_index',durable=True)
 channel.queue_declare(queue='data',durable=True)
 
 def process(ch, method, properties, body):
@@ -66,8 +65,7 @@ def process(ch, method, properties, body):
     recv+=1 
     ch.basic_ack(delivery_tag = method.delivery_tag)
     if count==recv:
-        print(f'Recieved all data') 
-        channel.basic_publish(exchange='logs', routing_key='', body='Done')
+        print(f'Recieved all data')  
         channel.stop_consuming()
 
 # Loop over samples
@@ -85,7 +83,7 @@ for s in samples:
     for val in samples[s]['list']:
         message = json.dumps({"val":val,"s":s})
         channel.basic_publish(exchange='',
-                        routing_key='file index',
+                        routing_key='file_index',
                         body=message,
                         properties=pika.BasicProperties(
                         delivery_mode = pika.DeliveryMode.Persistent))
@@ -206,7 +204,7 @@ plt.text(0.1,  # x
 # draw the legend
 # no box around the legend
 my_legend = main_axes.legend(frameon=False, fontsize=16)
-plt.savefig('/data/plot.png')
+plt.savefig('/plots/plot.png')
 
 # Signal stacked height
 signal_tot = signal_heights[0] + mc_x_tot

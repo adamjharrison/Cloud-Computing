@@ -1,3 +1,4 @@
+import os
 import vector  # for 4-momentum calculations
 import awkward as ak  # to represent nested data in columnar format
 import pika # pyright: ignore[reportMissingModuleSource]
@@ -5,7 +6,7 @@ import time
 import uproot
 import json
 import atlasopenmagic as atom
-
+os.environ["ATOM_CACHE"] = "/data"
 atom.set_release('2025e-13tev-beta')
 
 lumi = 36.6
@@ -144,23 +145,18 @@ def splice(val,s):
     else:
         weights = ak.to_numpy(ak.concatenate(sample_data).totalWeight).tolist()
     procdata = json.dumps({"s":s,"hist":hist,"weights":weights})
-    return procdata
-        
+    return procdata 
 
 params = pika.ConnectionParameters(
     'rabbitmq',
-    heartbeat=0)
+    heartbeat=600,port=5672)
 
 connection = pika.BlockingConnection(params)
 channel = connection.channel()
-channel.exchange_declare(exchange='logs', exchange_type='fanout')
-result = channel.queue_declare(queue='done')
-queue_name = result.method.queue
 
-channel.queue_bind(exchange='logs', queue=queue_name)
-
-channel.queue_declare(queue='file index', durable=True)
+channel.queue_declare(queue='file_index', durable=True)
 channel.queue_declare(queue='data',durable=True)
+
 def callback(ch, method, properties, body):
     print("Received file")
     message = json.loads(body.decode())
@@ -174,16 +170,13 @@ def callback(ch, method, properties, body):
                         delivery_mode = pika.DeliveryMode.Persistent))
     print('Sent back file')
     ch.basic_ack(delivery_tag = method.delivery_tag)
-def close(ch, method, properties, body):
-    print("Closing container")
-    channel.stop_consuming()
-    connection.close()
+
 channel.basic_qos(prefetch_count=1)
 # setup to listen for messages on queue 'messages'
-channel.basic_consume(queue='file index', on_message_callback=callback)
-channel.basic_consume(queue=queue_name, on_message_callback=close, auto_ack=True)
+channel.basic_consume(queue='file_index', on_message_callback=callback)
 
 print('Waiting for messages. To exit press CTRL+C')
 
 # start listening
 channel.start_consuming()
+connection.close()
