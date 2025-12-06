@@ -7,7 +7,7 @@ kubectl apply --server-side -f https://github.com/kedacore/keda/releases/downloa
 kubectl apply -f deployment/.
 
 #waits for main job to output plot
-kubectl wait --for=condition=complete --timeout=30m job/main
+kubectl wait --for=condition=complete --timeout=30m job/combiner
 
 #cleanup
 ./cleanup.sh

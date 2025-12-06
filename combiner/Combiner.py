@@ -9,9 +9,6 @@ import atlasopenmagic as atom
 
 dir = "/data/openatlas"
 os.environ["ATOM_CACHE"] = dir
-
-from atlasopenmagic import install_from_environment
-install_from_environment()
 atom.set_release('2025e-13tev-beta')
 
 MeV = 0.001
@@ -52,7 +49,6 @@ params = pika.ConnectionParameters('rabbitmq',heartbeat=600,port=5672)
 connection = pika.BlockingConnection(params)
 channel = connection.channel()
 
-channel.queue_declare(queue='file_index',durable=True)
 channel.queue_declare(queue='data',durable=True)
 channel.queue_declare(queue='nchunks',durable=True)
 
@@ -83,10 +79,6 @@ chunkcount = {}
 recvchunk = {}
 frames = {}
 for s in samples:
-
-    # Print which sample is being processed
-    print('Processing '+s+' samples')
-
     # Define empty list to hold data
     frames[s] = {}
     recvchunk[s] = {}
@@ -96,15 +88,10 @@ for s in samples:
         frames[s][val]=[]
         recvchunk[s][val] = 0
         chunkcount[s][val] = None
-        message = json.dumps({"val":val,"s":s})
-        channel.basic_publish(exchange='',
-                        routing_key='file_index',
-                        body=message,
-                        properties=pika.BasicProperties(
-                        delivery_mode = pika.DeliveryMode.Persistent))
-print('Sent all data')
+
 channel.basic_consume(queue='nchunks', on_message_callback=chunk_count,auto_ack=False)
 channel.basic_consume(queue='data', on_message_callback=process,auto_ack=False)
+
 for s in samples:
     for val in samples[s]['list']:
         while chunkcount[s][val]==None or chunkcount[s][val]!=recvchunk[s][val]:

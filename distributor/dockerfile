@@ -1,0 +1,7 @@
+FROM python:3.13
+
+RUN python -m pip install atlasopenmagic numpy awkward pika
+
+COPY . .
+
+CMD [ "python","-u", "./Distributor.py"]
