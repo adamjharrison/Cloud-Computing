@@ -12,7 +12,7 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   storageClassName: local-storage
   local:
-    path: /Users/adamjharrison/Desktop/Assessment4/Cloud-Computing/plots
+    path: /Users/adamjharrison/Desktop/Project/Cloud-Computing/plots
   nodeAffinity:
     required:
       nodeSelectorTerms:

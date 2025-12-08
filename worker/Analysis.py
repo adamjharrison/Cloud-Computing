@@ -83,7 +83,6 @@ def splice(val,s):
 
     # Open file
     tree = uproot.open(fileString + ":analysis")
-    cid=0
     csize=100000
     nchunks = (tree.num_entries +csize-1)//csize
     metadata = json.dumps({"s":s,"val":val,"nchunks":nchunks})
@@ -150,19 +149,13 @@ def splice(val,s):
         print("\t\t nIn: "+str(nIn)+",\t nOut: \t"+str(nOut)+"\t in " +
                 str(round(elapsed, 1))+"s")  # events before and after
         print("Processed chunk")
-        hist = ak.to_numpy(data['mass']).tolist()
-        if s == 'Data':
-            weights = None
-        else:
-            weights = ak.to_numpy(data.totalWeight).tolist()
-        procdata = json.dumps({"s":s,"val":val,"cid":cid,"csize":csize,"chunk":ak.to_json(data)})
+        procdata = json.dumps({"s":s,"val":val,"chunk":ak.to_json(data)})
         channel.basic_publish(exchange='',
                         routing_key='data',
                         body=procdata,
                         properties=pika.BasicProperties(
                         delivery_mode = pika.DeliveryMode.Persistent))
         print('Sent back chunk')
-        cid+=1
 
 params = pika.ConnectionParameters('rabbitmq',heartbeat=600,port=5672)
 

@@ -65,12 +65,9 @@ def process(ch, method, properties, body):
     print("Received processed chunk")
     message = json.loads(body.decode())
     chunk = ak.from_json(message['chunk'])
-    cid = message['cid']
     s = message['s']
     val = message['val']
-    if val not in frames[s]:
-        frames[s][val] = []
-    frames[s][val].append({"cid":cid,"chunk":chunk})
+    frames[s][val].append(chunk)
     recvchunk[s][val]+=1 
     ch.basic_ack(delivery_tag = method.delivery_tag)
 
@@ -99,10 +96,7 @@ for s in samples:
     print(f'Recieved all data for {s}')        
     files = []
     for val in samples[s]['list']:
-        chunks = frames[s][val]
-        chunks.sort(key=lambda x:x["cid"]) 
-        for x in chunks:
-            files.append(x['chunk'])
+            files.extend(frames[s][val])
     all_data[s] = ak.concatenate(files)
 connection.close()
 data_x, _ = np.histogram(ak.to_numpy(all_data['Data']['mass']),
@@ -228,16 +222,13 @@ plt.savefig('/plots/plot.png')
 # Signal stacked height
 signal_tot = signal_heights[0] + mc_x_tot
 
-# Peak of signal
-print(signal_tot[18])
-
-# Neighbouring bins
-print(signal_tot[17:20])
-
 # Signal and background events
 N_sig = signal_tot[17:20].sum()
 N_bg = mc_x_tot[17:20].sum()
 
 # Signal significance calculation
 signal_significance = N_sig/np.sqrt(N_bg + 0.3 * N_bg**2)  # EXPLAIN THE 0.3
-print(f"\nResults:\n{N_sig=}\n{N_bg=}\n{signal_significance=}\n")
+with open("/plots/output.txt", "w") as file:
+    file.write(f"{signal_tot[18]}\n")
+    file.write(f"{signal_tot[17:20]}\n")
+    file.write(f"\nResults:\n{N_sig=}\n{N_bg=}\n{signal_significance=}\n")
