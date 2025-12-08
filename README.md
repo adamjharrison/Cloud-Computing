@@ -5,7 +5,7 @@ Build images using:
 ```
 ./build.sh
 ```
-In the combiner-deployment.yaml change the local path to your full working directory or the directory you want your outputs to.
+**In the combiner-deployment.yaml change the local path to your full working directory or the directory you want your outputs to.**
 
 Open Docker Desktop and Start Kubernetes. And use this bash script to run the deployment:
 ```
