@@ -7,11 +7,12 @@ import pika # pyright: ignore[reportMissingModuleSource]
 import json
 import atlasopenmagic as atom
 
+#Sets the cached directory and release
 dir = "/data/openatlas"
 os.environ["ATOM_CACHE"] = dir
 atom.set_release('2025e-13tev-beta')
 
-MeV = 0.001
+#constants
 GeV = 1.0
 xmin = 80 * GeV
 xmax = 250 * GeV
@@ -27,9 +28,8 @@ bin_centres = np.arange(start=xmin+step_size/2,  # The interval includes this va
                         step=step_size)  # Spacing between values
 
 skim = "exactly4lep"
-# Define empty dictionary to hold awkward arrays
-all_data = {}
 
+#definition of samples
 defs = {
     r'Data': {'dids': ['data']},
     r'Background $Z,t\bar{t},t\bar{t}+V,VVV$': {'dids': [410470, 410155, 410218,
@@ -41,17 +41,26 @@ defs = {
     r'Signal ($m_H$ = 125 GeV)':  {'dids': [345060, 346228, 346310, 346311, 346312,
                                             346340, 346341, 346342], 'color': "#00cdff"},  # light blue
 }
-
 samples = atom.build_dataset(defs, skim=skim, protocol='https', cache=True)
 
+#connects to RabbitMQ Service
 params = pika.ConnectionParameters('rabbitmq',heartbeat=600,port=5672)
+while True: #loop to wait until RabbitMQ Service starts
+    connected = False
+    try:
+        connection = pika.BlockingConnection(params)
+        channel = connection.channel()
+        connected = True
+    except pika.exceptions.AMQPConnectionError:
+        print("waiting for RabbitMQ to start")
+    if connected:
+        break
 
-connection = pika.BlockingConnection(params)
-channel = connection.channel()
-
+#declare queues to connect to
 channel.queue_declare(queue='data',durable=True)
 channel.queue_declare(queue='nchunks',durable=True)
 
+#callback to save the total number of chunks for a given file
 def chunk_count(ch,method,properties,body):
     print("Recieved number of chunks")
     message = json.loads(body.decode())
@@ -60,6 +69,7 @@ def chunk_count(ch,method,properties,body):
     chunkcount[s][val] = message['nchunks']
     ch.basic_ack(delivery_tag = method.delivery_tag)
     
+#callback to recieve a processed chunk and add to the all_data
 def process(ch, method, properties, body):
     global recv,count
     print("Received processed chunk")
@@ -67,38 +77,37 @@ def process(ch, method, properties, body):
     chunk = ak.from_json(message['chunk'])
     s = message['s']
     val = message['val']
-    frames[s][val].append(chunk)
+    all_data[s].append(chunk)
     recvchunk[s][val]+=1 
     ch.basic_ack(delivery_tag = method.delivery_tag)
 
 # Loop over samples
 chunkcount = {}
 recvchunk = {}
-frames = {}
+all_data = {}
 for s in samples:
     # Define empty list to hold data
-    frames[s] = {}
+    all_data[s] = []
     recvchunk[s] = {}
     chunkcount[s] = {}
     # Loop over each file
     for val in samples[s]['list']:
-        frames[s][val]=[]
         recvchunk[s][val] = 0
         chunkcount[s][val] = None
 
+#start consuming 
 channel.basic_consume(queue='nchunks', on_message_callback=chunk_count,auto_ack=False)
 channel.basic_consume(queue='data', on_message_callback=process,auto_ack=False)
 
+#continue consuming until each sample has recieved all the chunks for every file
 for s in samples:
     for val in samples[s]['list']:
         while chunkcount[s][val]==None or chunkcount[s][val]!=recvchunk[s][val]:
             connection.process_data_events(time_limit=1)
-    print(f'Recieved all data for {s}')        
-    files = []
-    for val in samples[s]['list']:
-            files.extend(frames[s][val])
-    all_data[s] = ak.concatenate(files)
-connection.close()
+    print(f'Recieved all data for {s}')
+    all_data[s] = ak.concatenate(all_data[s])#once a sample has been fully recieved concatenate the data for the sample  
+connection.close() #close the connection once all data recieved
+
 data_x, _ = np.histogram(ak.to_numpy(all_data['Data']['mass']),
                          bins=bin_edges)  # histogram the data
 data_x_errors = np.sqrt(data_x)  # statistical error on the data
@@ -228,7 +237,7 @@ N_bg = mc_x_tot[17:20].sum()
 
 # Signal significance calculation
 signal_significance = N_sig/np.sqrt(N_bg + 0.3 * N_bg**2)  # EXPLAIN THE 0.3
-with open("/plots/output.txt", "w") as file:
-    file.write(f"{signal_tot[18]}\n")
-    file.write(f"{signal_tot[17:20]}\n")
-    file.write(f"\nResults:\n{N_sig=}\n{N_bg=}\n{signal_significance=}\n")
+with open("/plots/output.txt", "w") as file: #saves the significant output to a txt file
+    file.write(f"Peak Signal: {signal_tot[18]}\n")
+    file.write(f"Neighbouring bins: {signal_tot[17:20]}\n")
+    file.write(f"\nResults:\n{float(N_sig)}\n{float(N_bg)}\n{float(signal_significance)}\n")

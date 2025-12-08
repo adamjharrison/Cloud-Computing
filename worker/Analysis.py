@@ -7,18 +7,21 @@ import uproot
 import json
 import atlasopenmagic as atom
 
+#Sets the cached directory and release
 dir = "/data/openatlas"
 os.environ["ATOM_CACHE"] = dir
 atom.set_release('2025e-13tev-beta')
 
+#constants
 lumi = 36.6
+fraction = 1.0
 
 variables = ['lep_pt', 'lep_eta', 'lep_phi', 'lep_e', 'lep_charge', 'lep_type', 'trigE', 'trigM', 'lep_isTrigMatched',
              'lep_isLooseID', 'lep_isMediumID', 'lep_isLooseIso', 'lep_type']
 
+weight_variables = ["filteff", "kfac", "xsec", "mcWeight", "ScaleFactor_PILEUP",
+                    "ScaleFactor_ELE", "ScaleFactor_MUON", "ScaleFactor_LepTRIGGER"]
 # Cut lepton type (electron type is 11,  muon type is 13)
-# reduce this is if you want quicker runtime (implemented in the loop over the tree)
-fraction = 1.0
 
 def cut_lep_type(lep_type):
     sum_lep_type = lep_type[:, 0] + lep_type[:, 1] + \
@@ -30,7 +33,6 @@ def cut_lep_type(lep_type):
 
 # Cut lepton charge
 
-
 def cut_lep_charge(lep_charge):
     # first lepton in each event is [:, 0], 2nd lepton is [:, 1] etc
     sum_lep_charge = lep_charge[:, 0] + lep_charge[:,
@@ -41,32 +43,23 @@ def cut_lep_charge(lep_charge):
 # Calculate invariant mass of the 4-lepton state
 # [:, i] selects the i-th lepton in each event
 
-
 def calc_mass(lep_pt, lep_eta, lep_phi, lep_e):
     p4 = vector.zip({"pt": lep_pt, "eta": lep_eta, "phi": lep_phi, "E": lep_e})
     # .M calculates the invariant mass
     invariant_mass = (p4[:, 0] + p4[:, 1] + p4[:, 2] + p4[:, 3]).M
     return invariant_mass
 
-
 def cut_trig_match(lep_trigmatch):
     trigmatch = lep_trigmatch
     cut1 = ak.sum(trigmatch, axis=1) >= 1
     return cut1
 
-
 def cut_trig(trigE, trigM):
     return trigE | trigM
-
 
 def ID_iso_cut(IDel, IDmu, isoel, isomu, pid):
     thispid = pid
     return (ak.sum(((thispid == 13) & IDmu & isomu) | ((thispid == 11) & IDel & isoel), axis=1) == 4)
-
-
-weight_variables = ["filteff", "kfac", "xsec", "mcWeight", "ScaleFactor_PILEUP",
-                    "ScaleFactor_ELE", "ScaleFactor_MUON", "ScaleFactor_LepTRIGGER"]
-
 
 def calc_weight(weight_variables, events):
     total_weight = lumi * 1000 / events["sum_of_weights"]
@@ -74,7 +67,7 @@ def calc_weight(weight_variables, events):
         total_weight = total_weight * abs(events[variable])
     return total_weight
 
-def splice(val,s):
+def splice(val,s):#process file
     fileString = val
 
     # start the clock
@@ -83,8 +76,10 @@ def splice(val,s):
 
     # Open file
     tree = uproot.open(fileString + ":analysis")
-    csize=100000
+    csize=100000 #chunksize
     nchunks = (tree.num_entries +csize-1)//csize
+    
+    #send number of chunks
     metadata = json.dumps({"s":s,"val":val,"nchunks":nchunks})
     channel.basic_publish(exchange='',
                         routing_key='nchunks',
@@ -92,7 +87,8 @@ def splice(val,s):
                         properties=pika.BasicProperties(
                         delivery_mode = pika.DeliveryMode.Persistent))
     print('Sent number of chunks')
-    # Loop over data in the tree
+    
+    # Loop over data in the tree in chunks of given chunksize
     for data in tree.iterate(variables + weight_variables + ["sum_of_weights", "lep_n"],
                                 library="ak",
                                 entry_stop=tree.num_entries*fraction,  # , # process up to numevents*fraction
@@ -149,6 +145,8 @@ def splice(val,s):
         print("\t\t nIn: "+str(nIn)+",\t nOut: \t"+str(nOut)+"\t in " +
                 str(round(elapsed, 1))+"s")  # events before and after
         print("Processed chunk")
+        
+        #send over processed chunk to data queue
         procdata = json.dumps({"s":s,"val":val,"chunk":ak.to_json(data)})
         channel.basic_publish(exchange='',
                         routing_key='data',
@@ -156,29 +154,43 @@ def splice(val,s):
                         properties=pika.BasicProperties(
                         delivery_mode = pika.DeliveryMode.Persistent))
         print('Sent back chunk')
-
+        
+#connects to RabbitMQ Service
 params = pika.ConnectionParameters('rabbitmq',heartbeat=600,port=5672)
 
-connection = pika.BlockingConnection(params)
-channel = connection.channel()
-
+#loop to wait until RabbitMQ Service starts
+while True:
+    connected = False
+    try:
+        connection = pika.BlockingConnection(params)
+        channel = connection.channel()
+        connected = True
+    except pika.exceptions.AMQPConnectionError:
+        print("waiting for RabbitMQ to start")
+    if connected:
+        break
+    
+#declare queues to connect to
 channel.queue_declare(queue='file_index', durable=True)
 channel.queue_declare(queue='data',durable=True)
 channel.queue_declare(queue='nchunks',durable=True)
+
+#callback for recieved file index
 def callback(ch, method, properties, body):
     print("Received file")
     message = json.loads(body.decode())
     val = message['val']
     s = message['s']
-    splice(val,s)
+    splice(val,s)#processs recieved file
     print('Sent back file')
+    #only acknowledge once whole file is processed
     ch.basic_ack(delivery_tag = method.delivery_tag)
 
+#only process one file at a time
 channel.basic_qos(prefetch_count=1)
-# setup to listen for messages on queue 'messages'
-channel.basic_consume(queue='file_index', on_message_callback=callback,auto_ack=False)
 
-print('Waiting for messages. To exit press CTRL+C')
+#declare queue to listen to
+channel.basic_consume(queue='file_index', on_message_callback=callback,auto_ack=False)
 
 # start listening
 channel.start_consuming()
